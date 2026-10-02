@@ -1,63 +1,50 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "led_strip.h" // The new component header
+#include "freertos/queue.h"
 #include "esp_err.h"
 
 #define BLINK_GPIO 38
 
-void rgb_blink_task(void *pvParameter) {
-    led_strip_handle_t led_strip;
 
-    // 1. Configure the LED strip (v3.x API)
-    led_strip_config_t strip_config = {
-        .strip_gpio_num = BLINK_GPIO,
-        .max_leds = 1,
-        // The v3 API renamed this property and enum
-        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
-        .led_model = LED_MODEL_WS2812, 
-        };
+void sensor_emulator_task(void *pvParameters) {
+    QueueHandle_t sensor_data_queue = (QueueHandle_t)pvParameters;
+    while (1) {
+        uint8_t sensor_data = rand() % 256; // Simulate sensor data (0-255)
+        vTaskDelay(pdMS_TO_TICKS(1000)); // Simulate sensor data generation every second
+        
+        xQueueSend(sensor_data_queue, &sensor_data, portMAX_DELAY); // Send data to queue
+    }
+}
 
-    // 2. Configure the RMT backend (generates the hardware signal)
-    led_strip_rmt_config_t rmt_config = {
-        .resolution_hz = 10 * 1000 * 1000, // 10MHz resolution
-        .flags.with_dma = false,
-    };
-    
-    // 3. Initialize the device
-    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
-
-    // ADD THIS: Give the NeoPixel 10ms to wake up
-    vTaskDelay(pdMS_TO_TICKS(10)); 
-
-    led_strip_clear(led_strip);
-    
-    bool led_state = false;
+void screen_emulator_task(void *pvParameters) {
+    QueueHandle_t sensor_data_queue = (QueueHandle_t)pvParameters;
+    uint8_t received_data;
 
     while (1) {
-        if (led_state) {
-            // Set pixel 0 to Blue (Red: 0, Green: 0, Blue: 50)
-            // Brightness is 0-255. 50 is comfortably bright without blinding you.
-            led_strip_set_pixel(led_strip, 0, 0, 0, 50);
-            
-            // Push the color data to the actual LED
-            led_strip_refresh(led_strip);
-        } else {
-            // Turn the LED off
-            led_strip_clear(led_strip);
+        if (xQueueReceive(sensor_data_queue, &received_data, portMAX_DELAY)) {
+            printf("Received sensor data: %d\n", received_data);
         }
-
-        led_state = !led_state;
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
 void app_main(void) {
+    QueueHandle_t sensor_data_queue = xQueueCreate(10, sizeof(uint8_t));
+    
     xTaskCreate(
-        rgb_blink_task, 
-        "rgb_blink_task", 
+        sensor_emulator_task, 
+        "Sensor Emulator Task", 
         4096, // Increased stack size slightly for the LED driver overhead
-        NULL, 
+        sensor_data_queue, 
+        5, 
+        NULL
+    );
+
+    xTaskCreate(
+        screen_emulator_task, 
+        "Screen Emulator Task", 
+        4096, // Increased stack size slightly for the LED driver overhead
+        sensor_data_queue, 
         5, 
         NULL
     );
