@@ -1,64 +1,155 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "led_strip.h" // The new component header
-#include "esp_err.h"
 
-#define BLINK_GPIO 38
+TaskHandle_t taskAHandle = NULL;
+TaskHandle_t taskBHandle = NULL;
 
-void rgb_blink_task(void *pvParameter) {
-    led_strip_handle_t led_strip;
 
-    // 1. Configure the LED strip (v3.x API)
-    led_strip_config_t strip_config = {
-        .strip_gpio_num = BLINK_GPIO,
-        .max_leds = 1,
-        // The v3 API renamed this property and enum
-        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
-        .led_model = LED_MODEL_WS2812, 
-        };
+void printFreeHeap(const char* message)
+{
+  printf(message);
+  printf(": ");
+  printf("%d", xPortGetFreeHeapSize());
+  printf(" bytes");
+  printf("\n");
+}
 
-    // 2. Configure the RMT backend (generates the hardware signal)
-    led_strip_rmt_config_t rmt_config = {
-        .resolution_hz = 10 * 1000 * 1000, // 10MHz resolution
-        .flags.with_dma = false,
-    };
-    
-    // 3. Initialize the device
-    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip));
 
-    // ADD THIS: Give the NeoPixel 10ms to wake up
-    vTaskDelay(pdMS_TO_TICKS(10)); 
+void taskA(void *parameter)
+{
+  while (1)
+  {
+    printf("Task A is running\n");
+    vTaskDelay(pdMS_TO_TICKS(2000));
+  }
+}
 
-    led_strip_clear(led_strip);
-    
-    bool led_state = false;
 
-    while (1) {
-        if (led_state) {
-            // Set pixel 0 to Blue (Red: 0, Green: 0, Blue: 50)
-            // Brightness is 0-255. 50 is comfortably bright without blinding you.
-            led_strip_set_pixel(led_strip, 0, 0, 0, 50);
-            
-            // Push the color data to the actual LED
-            led_strip_refresh(led_strip);
-        } else {
-            // Turn the LED off
-            led_strip_clear(led_strip);
-        }
+void taskB(void *parameter)
+{
+  while (1)
+  {
+    printf("Task B is running\n");
+    vTaskDelay(pdMS_TO_TICKS(2000));
+  }
+}
 
-        led_state = !led_state;
-        vTaskDelay(pdMS_TO_TICKS(1000));
+void TaskC(void *parameter)
+{
+  while (1)
+  {
+    int a = 1;
+    int b[100];
+
+    for (int i = 0; i < 100; i++)
+    {
+      b[i] = a + 1;
     }
+    printf("Task C is running\n");
+    printf("Stack high water mark: ");
+    printf("%d", uxTaskGetStackHighWaterMark(NULL));
+    printf("\n");
+
+    printf("Heap befiore malloc (bytes): %d\n", xPortGetFreeHeapSize());
+    int *ptr = (int *)pvPortMalloc(1024 * sizeof(int));
+
+    if (ptr == NULL)
+    {
+      printf("Memory allocation failed (not enough heap space)\n");
+      vPortFree(NULL);
+    }
+    else
+    {
+      printf("Memory allocated successfully\n");
+
+      for (int i = 0; i < 1024; i++)
+      {
+        ptr[i] = 3;
+      }
+
+    printf("Heap after malloc (bytes): %d\n", xPortGetFreeHeapSize());
+    vPortFree(ptr);
+    printf("Heap after free (bytes): %d\n", xPortGetFreeHeapSize());
+
+    vTaskDelay(pdMS_TO_TICKS(2000));
+  }
+}
 }
 
 void app_main(void) {
-    xTaskCreate(
-        rgb_blink_task, 
-        "rgb_blink_task", 
-        4096, // Increased stack size slightly for the LED driver overhead
+    printf("Starting FreeRTOS Memory Demo\n");
+    printFreeHeap("Free heap at start");
+
+    printf("Creating task A \n");
+    
+    BaseType_t resultA = xTaskCreatePinnedToCore(
+        taskA, 
+        "TaskA", 
+        8192, 
+        NULL,
+        1, 
+        &taskAHandle, 
+        0); // Create task A on core 0
+
+    if (resultA == pdPASS)
+    {
+        printf("Task A created successfully.\n");
+    }
+    else
+    {
+        printf("Task A creation FAILED.\n");
+    }
+
+    printFreeHeap("Free heap after Task A");
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // Create Task B on core 1
+    printf("Creating task B \n");
+    BaseType_t resultB = xTaskCreatePinnedToCore(
+        taskB, 
+        "TaskB", 
+        2048, 
+        NULL,
+        1, 
+        &taskBHandle, 
+        1); // Create task B on core 1
+
+    if (resultB == pdPASS)
+    {
+        printf("Task B created successfully.\n");
+    }
+    else
+    {
+        printf("Task B creation FAILED.\n");
+    }
+
+    printFreeHeap("Free heap after Task B");
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // Create Task C on core 0
+    printf("Creating task C \n");
+    BaseType_t resultC = xTaskCreatePinnedToCore(
+        TaskC, 
+        "TaskC", 
+        2048, 
+        NULL,
+        1, 
         NULL, 
-        5, 
-        NULL
-    );
+        0); // Create task C on core 0
+
+    if (resultC == pdPASS)
+    {
+        printf("Task C created successfully.\n");
+    }
+    else
+    {
+        printf("Task C creation FAILED.\n");
+    }
+    printFreeHeap("Free heap after Task C");
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
 }
